@@ -11,23 +11,19 @@ use crate::vysis::Component;
 use chrono::Local;
 use polars::prelude::*;
 use std::fs::File;
-use crate::wirelist::wirelist_dataframe_to_label_dataframe;
+use crate::flexible_table::flexible_table_to_labels_csv;
 use polars::datatypes::AnyValue;
 use polars::frame::DataFrame;
 use polars::frame::row::Row;
 use crate::shchleuniger::wirelist_to_schleuniger_ascii;
 use crate::shchleuniger::SchleunigerASCIIConfig;
-use crate::wirelist::grouped_wirelist_to_data_frame;
 use std::io::Write;
 use crate::wire_list_xlsx_formatter::color_map;
 
 use xlsxwriter::Workbook;
 
-use crate::wirelist::generate_grouped_wirelist;
-
+use crate::wirelist::{generate_grouped_wirelist, wirelist_to_flexible_table};
 use crate::wire_list_xlsx_formatter::WireListXlsxFormatter;
-
-use crate::wirelist::sort_wirelist_by_left_device_pin;
 
 use crate::vysis::Project;
 
@@ -43,25 +39,12 @@ pub fn export_xslx_wirelist(project: &Project,library: &Library, design_name: &s
         //let filepath = sanitise(filepath);
         //println!("{:?}", filepath);
         if let Ok(workbook) = Workbook::new(&filepath) {
-
             let wiregroups = generate_grouped_wirelist(library, &connectivity, harness).unwrap();
-         
+            let table = wirelist_to_flexible_table(wiregroups);
+
             let mut xlsx_formatter = WireListXlsxFormatter::new(&workbook, &colormap);
-
-            // Output plain wire list
             xlsx_formatter.print_header();
-
-            for mut group in wiregroups {
-                // Sort wire group
-                sort_wirelist_by_left_device_pin(&mut group);
-                //println!("{}", "BEGIN GROUP");
-                for wireentry in group {
-                    //println!("  {}", wireentry.name);
-                    xlsx_formatter.print_entry(&wireentry);
-                }
-                xlsx_formatter.bar();
-                //println!("{}", "END GROUP")
-            }
+            xlsx_formatter.format_from_table(&table);
 
             // Get harness part number
             let properties = design.get_design_properties();
@@ -84,34 +67,13 @@ pub fn export_xslx_wirelist(project: &Project,library: &Library, design_name: &s
     Ok(())
 }
 
-pub fn logic_harness_shchleuniger_export<W:Write>(project: &Project, library: &Library, design_name: &str, harness: &str,  writer: W) -> Result<(), Box<dyn std::error::Error>> {
-    
+pub fn logic_harness_shchleuniger_export<W: Write>(project: &Project, library: &Library, design_name: &str, harness: &str, writer: W) -> Result<(), Box<dyn std::error::Error>> {
     if let Some(design) = project.get_design(design_name) {
         let connectivity = design.get_connectivity();
-
-        //if let Ok(workbook) = Workbook::new(filepath) {
-
-            let wiregroups = generate_grouped_wirelist(library, &connectivity, harness).unwrap();
-            println!("{:?}", wiregroups);
-
-            let df = grouped_wirelist_to_data_frame(wiregroups);
-         
-        //     // let mut xlsx_formatter = WireListXlsxFormatter::new(&workbook, &colormap);
-        //     // // Output plain wire list
-        //     // xlsx_formatter.print_header();
-
-            wirelist_to_schleuniger_ascii(&SchleunigerASCIIConfig::default(), &df, writer);
-        // }
-        // else 
-        // {
-
-        // }
-    // outout device index
-    } else {
-        // can't open path
-        // return
+        let wiregroups = generate_grouped_wirelist(library, &connectivity, harness).unwrap();
+        let table = wirelist_to_flexible_table(wiregroups);
+        wirelist_to_schleuniger_ascii(&SchleunigerASCIIConfig::default(), &table, writer);
     }
-
     Ok(())
 }
 
@@ -122,38 +84,13 @@ pub fn logic_harness_labels_csv_export(project: &Project, library: &Library, des
 }
 
 
-pub fn logic_harness_labels_export<W:Write>(project: &Project, library: &Library, design_name: &str, harness: &str,  mut writer: W) -> Result<(), Box<dyn std::error::Error>> {
-    
+pub fn logic_harness_labels_export<W: Write>(project: &Project, library: &Library, design_name: &str, harness: &str, mut writer: W) -> Result<(), Box<dyn std::error::Error>> {
     if let Some(design) = project.get_design(design_name) {
         let connectivity = design.get_connectivity();
-
-        //if let Ok(workbook) = Workbook::new(filepath) {
-
-            let wiregroups = generate_grouped_wirelist(library, &connectivity, harness).unwrap();
-
-            let wire_list_df = grouped_wirelist_to_data_frame(wiregroups);
-         
-        //     // let mut xlsx_formatter = WireListXlsxFormatter::new(&workbook, &colormap);
-        //     // // Output plain wire list
-        //     // xlsx_formatter.print_header();
-
-            let mut label_df = wirelist_dataframe_to_label_dataframe(&wire_list_df);
-            CsvWriter::new(&mut writer)
-            .include_header(true)
-            .finish(&mut label_df)?;
-            println!("{}", label_df);
-            //println!("{}", wire_list_df);
-        // }
-        // else 
-        // {
-
-        // }
-    // outout device index
-    } else {
-        // can't open path
-        // return
+        let wiregroups = generate_grouped_wirelist(library, &connectivity, harness).unwrap();
+        let table = wirelist_to_flexible_table(wiregroups);
+        flexible_table_to_labels_csv(&table, &mut writer)?;
     }
-
     Ok(())
 }
 

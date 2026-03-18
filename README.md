@@ -7,7 +7,7 @@ This is a post-processor for VeSys(Capital Essentials) XML files, which you get 
 
 EXPORT LIBRARY XML
 -------------------
-The program also needs a `Library.xml` file in the same directory as `*.exe`. You can export Library XML from Component Manager.
+The program also needs a `Library.xml` file in the same directory as `*.exe` or same directory as XML of the design. You can export Library XML from Component Manager.
 
 
 ![Library XML](screenshot3.JPG){width=250}
@@ -16,6 +16,16 @@ BUILD
 -----
 
 This application is written in Rust.
+
+### Installing Rust on Windows
+
+1. Download [rustup-init.exe](https://win.rustup.rs/x86_64) and run it.
+2. Press Enter to accept defaults, wait for it to finish.
+3. Restart your terminal (or Cursor), then run `rustc --version` to verify.
+
+If `cargo build` fails with linker errors, install [Build Tools for Visual Studio](https://visualstudio.microsoft.com/visual-cpp-build-tools/) with the "Desktop development with C++" workload.
+
+---
 
 ```
 cargo build
@@ -30,13 +40,3 @@ Go to File -> Open to load project XML, then you may right click on various harn
 
 ![Library XML](screenshot.JPG){width=250}
 
-
-ROADMAP
-------------
-
-- Separate data from format (using Polars for intermediate data format)
-- Shchleuniger ASCII output for internal harnesses
-- Multi-wire terminations and indicators
-- Device index (or just BOM) for harness wire list report
-- Improved project outline
-- Table preview

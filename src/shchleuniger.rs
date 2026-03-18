@@ -7,17 +7,10 @@
 */
 
 use std::str::FromStr;
-use crate::vysyslib::Library;
 use std::io::Write;
 use csv::Terminator;
-use crate::vesys_table_reader::VysysTableReader;
-use crate::vysis::HarnessDesign;
-use csv::{Writer, WriterBuilder};
-use crate::vysisxml::XmlTableGroup;
-use std::path::PathBuf;
-use std::error::Error;
-use polars::prelude::*;
-use crate::utils::*;
+use csv::WriterBuilder;
+use crate::flexible_table::{TableData, wire_list_columns};
 
 
 pub struct SchleunigerASCIIConfig {
@@ -55,30 +48,27 @@ fn center_label(config: &SchleunigerASCIIConfig, record: Vec<String>) -> Vec<Str
     }
 }
 
-pub fn wirelist_to_schleuniger_ascii<W: Write>(config: &SchleunigerASCIIConfig, wire_list: &DataFrame, writer: W)  {
+pub fn wirelist_to_schleuniger_ascii<W: Write>(config: &SchleunigerASCIIConfig, wire_list: &impl TableData, writer: W) {
     let mut wtr = WriterBuilder::new()
         .delimiter(b'\t')
-        .flexible(true) // allow number of fields to change
+        .flexible(true)
         .terminator(Terminator::CRLF)
-        .from_writer(writer); 
+        .from_writer(writer);
 
     wtr.write_record(vec![
         String::from("Import"), String::from("ASCII"),
     ]);
-
     wtr.write_record(vec![
         String::from("Units"), String::from("inch"),
     ]);
-
     wtr.write_record(vec![
-        String::from("Area"), String::from("TT"), // Thermal Transfer
+        String::from("Area"), String::from("TT"),
     ]);
-
     wtr.write_record(vec![
-       String::from("Name"), 
-        String::from("Part"), 
-        String::from("Length"), 
-        String::from("Style"), 
+        String::from("Name"),
+        String::from("Part"),
+        String::from("Length"),
+        String::from("Style"),
         String::from("Stripping type"),
         String::from("Right strip"),
         String::from("Left strip"),
@@ -90,41 +80,25 @@ pub fn wirelist_to_schleuniger_ascii<W: Write>(config: &SchleunigerASCIIConfig, 
         String::from("Autorotation"),
     ]);
 
-    let mut wire_list = wire_list.clone(); 
-    wire_list.as_single_chunk_par(); // need to run this before getting columns
-    println!("{:?}", wire_list);
-    let mut iters = wire_list.columns(["WIRE_NAME",
-                                       "WIRE_FROM_PINLIST", 
-                                       "WIRE_FROM_CAVITY", 
-                                       "WIRE_TERMINAL_STRIP_LEN1", 
-                                       "WIRE_TO_PINLIST", 
-                                       "WIRE_TO_CAVITY", 
-                                       "WIRE_TERMINAL_STRIP_LEN2", 
-                                       "MODIFIED_LENGTH",
-                                       "PROCESSING"
-                                       ]).unwrap().iter().map(|s| s.iter()).collect::<Vec<_>>();
-
-    for row in 0..wire_list.height() {
-        let wire_name = anyvalue_to_str(&iters[0].next().unwrap_or_default());
-        let wire_from_pinlist = anyvalue_to_str(&iters[1].next().unwrap_or_default());
-        let wire_from_cavity = anyvalue_to_str(&iters[2].next().unwrap_or_default());
-        let wire_terminal_strip_len1 = anyvalue_to_str(&iters[3].next().unwrap_or_default());
-        let wire_to_pinlist = anyvalue_to_str(&iters[4].next().unwrap_or_default());
-        let wire_to_cavity = anyvalue_to_str(&iters[5].next().unwrap_or_default());
-        let wire_terminal_strip_len2 = anyvalue_to_str(&iters[6].next().unwrap_or_default());
-        let modified_length = anyvalue_to_str(&iters[7].next().unwrap_or_default());
-        let processing = anyvalue_to_str(&iters[8].next().unwrap_or_default());
+    for row in 0..wire_list.row_count() {
+        let wire_from_pinlist = wire_list.get_by_name(row, wire_list_columns::WIRE_FROM_PINLIST).unwrap_or("");
+        let wire_from_cavity = wire_list.get_by_name(row, wire_list_columns::WIRE_FROM_CAVITY).unwrap_or("");
+        let wire_terminal_strip_len1 = wire_list.get_by_name(row, wire_list_columns::WIRE_TERMINAL_STRIP_LEN1).unwrap_or("");
+        let wire_to_pinlist = wire_list.get_by_name(row, wire_list_columns::WIRE_TO_PINLIST).unwrap_or("");
+        let wire_to_cavity = wire_list.get_by_name(row, wire_list_columns::WIRE_TO_CAVITY).unwrap_or("");
+        let wire_terminal_strip_len2 = wire_list.get_by_name(row, wire_list_columns::WIRE_TERMINAL_STRIP_LEN2).unwrap_or("");
+        let modified_length = wire_list.get_by_name(row, wire_list_columns::MODIFIED_LENGTH).unwrap_or("");
+        let processing = wire_list.get_by_name(row, wire_list_columns::PROCESSING).unwrap_or("");
 
         let from = format!("{}-{}", wire_from_pinlist, wire_from_cavity);
         let to = format!("{}-{}", wire_to_pinlist, wire_to_cavity);
-        let article_name = format!("{}/{}",from, &to);
-        let part = (row + 1).to_string(); // count rows and use it as "part" which is just a number
-        let length = modified_length;
-
-        let style = processing;
+        let article_name = format!("{}/{}", from, to);
+        let part = (row + 1).to_string();
+        let length = modified_length.to_string();
+        let style = processing.to_string();
         let stripping_type = "9".to_owned();
-        let right_strip = wire_terminal_strip_len1;
-        let left_strip = wire_terminal_strip_len2;
+        let right_strip = wire_terminal_strip_len1.to_string();
+        let left_strip = wire_terminal_strip_len2.to_string();
         let partial_strip = "50%".to_owned();
         let marker_text = "\\#C@7\\&n\\&@7".to_owned();
         let marker_left_position = config.left_position;
@@ -132,20 +106,19 @@ pub fn wirelist_to_schleuniger_ascii<W: Write>(config: &SchleunigerASCIIConfig, 
         let autorotation = "X".to_owned();
 
         wtr.write_record(center_label(config, vec![
-            article_name, // 0
-            part, // 1
-            length, // 2
-            style, // 3
-            stripping_type, // 4
-            right_strip, // 5
-            left_strip, // 6
-            partial_strip, // 7
-            marker_text.clone(), // 8
-            marker_left_position.to_string(), // 9
-            marker_text, // 10
-            marker_right_position.to_string(), // 11
-            autorotation, // 12
+            article_name,
+            part,
+            length,
+            style,
+            stripping_type,
+            right_strip,
+            left_strip,
+            partial_strip,
+            marker_text.clone(),
+            marker_left_position.to_string(),
+            marker_text,
+            marker_right_position.to_string(),
+            autorotation,
         ]));
-    
     }
 }

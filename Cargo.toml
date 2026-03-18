@@ -36,11 +36,13 @@ xlsxwriter = "0.6.0"
 polars = { version = "0.42.0", features = ["rows", "lazy"]} 
 wildflower = "0.3.0"
 sanitise-file-name = "1.0.0"
+egui_dock = { path = "egui_dock_fork" }
+opener = "0.7"
 
 [target.'cfg(windows)'.dependencies] 
 winreg = "0.51"
 native-dialog = "0.7.0"
 simple_tables = "0.3.0"
-egui-data-table = "0.2.2"
+egui-data-table = { path = "egui-data-table" }
 chrono = "0.4.38"
 

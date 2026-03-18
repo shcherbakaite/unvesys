@@ -12,7 +12,7 @@ use xlsxwriter::*;
 use crate::xlsxtable::*;
 use xlsxwriter::format::*;
 use xlsxwriter::worksheet::PaperType;
-use crate::wirelist::*;
+use crate::flexible_table::{TableData, wire_list_columns};
 
 pub struct WireListXlsxFormatter<'a> {
     table : XLSXTable,
@@ -114,61 +114,70 @@ impl WireListXlsxFormatter<'_> {
         self.table.set_cell(row, Self::LEFT + Self::LABEL_TO, "To");
     }
 
-    pub fn print_entry(&mut self, wire: &WireEntry) {
-        // Wire
-        // Twisted indicator
-        let twisted_indicator = wire.twisted_with.as_ref().map(|x| {
-            format!(" (⤫ {})", x.clone())
-        });
-
-        self.table.set_cell(self.current_row, Self::LEFT + Self::WIRE_ITEM, &format!("{}{}", wire.name.to_string(), twisted_indicator.unwrap_or_default()));
-        // Short Descr
-        self.table.set_cell(self.current_row, Self::LEFT + Self::SHORT_DESCR, &wire.descr);
-        // From
-        let left_wire_end = wire.left.clone().unwrap_or_default();
-        self.table.set_cell(self.current_row, Self::LEFT + Self::FROM_DEVICE, &left_wire_end.device);
-        self.table.set_cell(self.current_row, Self::LEFT + Self::FROM_DASH, "-");
-        self.table.set_cell(self.current_row, Self::LEFT + Self::FROM_PIN, &left_wire_end.pin);
-        // Terminal
-        self.table.set_cell(self.current_row, Self::LEFT + Self::FROM_TERM_PARTNO, &left_wire_end.termination_partnumber);
-        self.table.set_cell(self.current_row, Self::LEFT + Self::FROM_TERM_NAME, &left_wire_end.termination_name);
-        // Wire
-        self.table.set_cell(self.current_row, Self::LEFT + Self::WIRE_PARTNO, &wire.partno);
-        self.table.set_cell(self.current_row, Self::LEFT + Self::WIRE_NAME, &format!("{} {}", wire.material.to_string(), &wire.spec));
-        self.table.set_cell(self.current_row, Self::LEFT + Self::WIRE_COLOR, &wire.color_description);
-        self.table.set_cell(self.current_row, Self::LEFT + Self::WIRE_LEN, &wire.length.to_string());
-        // Terminal
-        let right_wire_end = wire.right.clone().unwrap_or_default();
-        self.table.set_cell(self.current_row, Self::LEFT + Self::TO_TERM_PARTNO, &right_wire_end.termination_partnumber);
-        self.table.set_cell(self.current_row, Self::LEFT + Self::TO_TERM_NAME, &right_wire_end.termination_name);
-        // To
-        self.table.set_cell(self.current_row, Self::LEFT + Self::TO_DEVICE, &right_wire_end.device);
-        self.table.set_cell(self.current_row, Self::LEFT + Self::TO_DASH, "-");
-        self.table.set_cell(self.current_row, Self::LEFT + Self::TO_PIN, &right_wire_end.pin);
-        // From/To Label Columns
-        self.table.set_cell(self.current_row, Self::LEFT + Self::LABEL_FROM, &format!("{}-{}", &left_wire_end.device, &left_wire_end.pin));
-        self.table.set_cell(self.current_row, Self::LEFT + Self::LABEL_TO, &format!("{}-{}", &right_wire_end.device, &right_wire_end.pin));
-        // Set row bg color
-        self.table.modify_region_format(&XLSXTableRegion {
-            first_row: self.current_row,
-            first_col: Self::LEFT,
-            last_row: self.current_row,
-            last_col: Self::LEFT + Self::TO_PIN
-        }, &|format| {
-            let color_code_upper:String = wire.color_code.to_string().to_uppercase();
-            format.set_bg_color(*self.bg_colormap.get(&color_code_upper).unwrap_or(&FormatColor::White));
-        });
-        // Increment row
-        self.current_row = self.current_row + 1;
+    /// Write all rows from a FlexibleTable
+    pub fn format_from_table(&mut self, data: &crate::flexible_table::FlexibleTable) {
+        let meta_provider = |row: usize| -> Option<(bool, Option<String>)> {
+            data.row_meta(row).map(|m| (m.group_boundary_below, m.color_code.clone()))
+        };
+        self.format_from_table_with_meta(data, meta_provider);
     }
 
-    pub fn bar(&mut self) {
-        self.table.set_region_border_bottom(&XLSXTableRegion {
-            first_row: self.current_row - 1,
-            first_col: Self::LEFT,
-            last_row: self.current_row - 1,
-            last_col: Self::LEFT + Self::TO_PIN
-        }, FormatBorder::Medium);
+    /// Write all rows from table data with custom row metadata
+    pub fn format_from_table_with_meta<F>(&mut self, data: &impl TableData, mut meta: F)
+    where
+        F: FnMut(usize) -> Option<(bool, Option<String>)>,
+    {
+        for row in 0..data.row_count() {
+            let wire_item = data.get_by_name(row, wire_list_columns::WIRE_NAME).unwrap_or("");
+            let material = data.get_by_name(row, wire_list_columns::MATERIAL).unwrap_or("");
+            let spec = data.get_by_name(row, wire_list_columns::SPEC).unwrap_or("");
+            let wire_mat_spec = format!("{} {}", material, spec);
+
+            self.table.set_cell(self.current_row, Self::LEFT + Self::WIRE_ITEM, wire_item);
+            self.table.set_cell(self.current_row, Self::LEFT + Self::SHORT_DESCR, data.get_by_name(row, wire_list_columns::SHORT_DESCRIPTION).unwrap_or(""));
+            self.table.set_cell(self.current_row, Self::LEFT + Self::FROM_DEVICE, data.get_by_name(row, wire_list_columns::WIRE_FROM_PINLIST).unwrap_or(""));
+            self.table.set_cell(self.current_row, Self::LEFT + Self::FROM_DASH, "-");
+            self.table.set_cell(self.current_row, Self::LEFT + Self::FROM_PIN, data.get_by_name(row, wire_list_columns::WIRE_FROM_CAVITY).unwrap_or(""));
+            self.table.set_cell(self.current_row, Self::LEFT + Self::FROM_TERM_PARTNO, data.get_by_name(row, wire_list_columns::FROM_TERM_PARTNO).unwrap_or(""));
+            self.table.set_cell(self.current_row, Self::LEFT + Self::FROM_TERM_NAME, data.get_by_name(row, wire_list_columns::FROM_TERM_NAME).unwrap_or(""));
+            self.table.set_cell(self.current_row, Self::LEFT + Self::WIRE_PARTNO, data.get_by_name(row, wire_list_columns::CUSTOMER_PART_NUMBER).unwrap_or(""));
+            self.table.set_cell(self.current_row, Self::LEFT + Self::WIRE_NAME, &wire_mat_spec);
+            self.table.set_cell(self.current_row, Self::LEFT + Self::WIRE_COLOR, data.get_by_name(row, wire_list_columns::COLOR_DESCRIPTION).unwrap_or(""));
+            self.table.set_cell(self.current_row, Self::LEFT + Self::WIRE_LEN, data.get_by_name(row, wire_list_columns::MODIFIED_LENGTH).unwrap_or(""));
+            self.table.set_cell(self.current_row, Self::LEFT + Self::TO_TERM_PARTNO, data.get_by_name(row, wire_list_columns::TO_TERM_PARTNO).unwrap_or(""));
+            self.table.set_cell(self.current_row, Self::LEFT + Self::TO_TERM_NAME, data.get_by_name(row, wire_list_columns::TO_TERM_NAME).unwrap_or(""));
+            self.table.set_cell(self.current_row, Self::LEFT + Self::TO_DEVICE, data.get_by_name(row, wire_list_columns::WIRE_TO_PINLIST).unwrap_or(""));
+            self.table.set_cell(self.current_row, Self::LEFT + Self::TO_DASH, "-");
+            self.table.set_cell(self.current_row, Self::LEFT + Self::TO_PIN, data.get_by_name(row, wire_list_columns::WIRE_TO_CAVITY).unwrap_or(""));
+            self.table.set_cell(self.current_row, Self::LEFT + Self::LABEL_FROM, data.get_by_name(row, wire_list_columns::FROM_LABEL).unwrap_or(""));
+            self.table.set_cell(self.current_row, Self::LEFT + Self::LABEL_TO, data.get_by_name(row, wire_list_columns::TO_LABEL).unwrap_or(""));
+
+            let row_meta = meta(row);
+            if let Some((_, ref color_code)) = row_meta {
+                if let Some(ref cc) = color_code {
+                    let color_code_upper = cc.to_uppercase();
+                    self.table.modify_region_format(&XLSXTableRegion {
+                        first_row: self.current_row,
+                        first_col: Self::LEFT,
+                        last_row: self.current_row,
+                        last_col: Self::LEFT + Self::TO_PIN,
+                    }, &|format| {
+                        format.set_bg_color(*self.bg_colormap.get(&color_code_upper).unwrap_or(&FormatColor::White));
+                    });
+                }
+            }
+
+            self.current_row += 1;
+
+            if row_meta.map(|(gb, _)| gb).unwrap_or(false) {
+                self.table.set_region_border_bottom(&XLSXTableRegion {
+                    first_row: self.current_row - 1,
+                    first_col: Self::LEFT,
+                    last_row: self.current_row - 1,
+                    last_col: Self::LEFT + Self::TO_PIN,
+                }, FormatBorder::Medium);
+            }
+        }
     }
 }
 
@@ -266,6 +275,41 @@ impl Drop for WireListXlsxFormatter<'_> {
 
         self.table.render_to_worksheet(&mut self.sheet);
     }
+}
+
+/// Export any FlexibleTable to XLSX with a simple format (header + data rows).
+/// Used for connector connections and other non-wire-list tables.
+pub fn flexible_table_to_xlsx_generic(
+    workbook: &Workbook,
+    table: &crate::flexible_table::FlexibleTable,
+    title: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use crate::flexible_table::TableData;
+    use xlsxwriter::format::FormatAlignment;
+
+    let mut sheet = workbook.add_worksheet(None)?;
+    let _ = sheet.set_header(title);
+
+    let mut header_format = Format::new();
+    header_format.set_bold();
+    let mut default_format = Format::new();
+    default_format.set_align(FormatAlignment::Center);
+
+    // Header row
+    for (col, col_spec) in table.columns.iter().enumerate() {
+        let _ = sheet.write_string(0, col as u16, &col_spec.display, Some(&header_format));
+        sheet.set_column_pixels(col as u16, col as u16, 100, None);
+    }
+
+    // Data rows
+    for row in 0..table.row_count() {
+        for col in 0..table.column_count() {
+            let value = table.get(row, col).unwrap_or("");
+            let _ = sheet.write_string((row + 1) as u32, col as u16, value, Some(&default_format));
+        }
+    }
+
+    Ok(())
 }
 
 pub fn color_map() -> Box<HashMap<String, FormatColor>> {

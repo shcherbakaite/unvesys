@@ -7,11 +7,8 @@
 */
 
 
-use polars::prelude::NamedFrom;
 use crate::vysisxml::XmlTableGroup;
 use std::collections::HashMap;
-use polars::prelude::*;
-//use polars::prelude::NamedFrom;
 
 
 
@@ -91,7 +88,7 @@ type ColumnIndex = usize;
 #[derive(Debug, Clone)]
 pub struct VysysTableReader<'a> {
     tablegroup: &'a XmlTableGroup,
-    column_map: HashMap<String, (ColumnIndex, String)>
+    pub column_map: HashMap<String, (ColumnIndex, String)>
 }
 
 impl<'a> VysysTableReader<'a> {
@@ -205,19 +202,4 @@ impl<'a> Iterator for VysysTableRowIter<'a> {
     }
 }
 
-impl From<VysysTableReader<'_>> for DataFrame {
-    fn from(table_reader: VysysTableReader<'_>) -> Self {
-        let fields = table_reader.column_map.keys().map(|k| Field::new(k, DataType::String));
-
-        let sc: Schema = Schema::from_iter(fields);
-        let mut df = DataFrame::empty_with_schema(&sc);
-
-        let row_iter = table_reader.get_row_iter();
-        for row in row_iter {
-            let series: Vec<_> = table_reader.column_map.keys().map(|k| Series::new(k, &[row.get_column(k).unwrap_or("N/A")])).collect();
-            df.vstack_mut(&(DataFrame::new(series).unwrap()));
-        }
-        df
-    }
-}
 

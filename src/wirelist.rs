@@ -1,6 +1,3 @@
-use polars::prelude::NamedFrom;
-use polars::series::Series;
-use polars::frame::DataFrame;
 /*
  Wire list
 
@@ -9,9 +6,7 @@ use polars::frame::DataFrame;
  9/18/2024 3:34:10 PM
 */
 
-use polars::datatypes::Field;
-use polars::datatypes::DataType;
-use polars::prelude::Schema;
+use crate::flexible_table::{ColumnSpec, FlexibleRow, FlexibleTable, RowMeta};
 use crate::traverse::traverse;
 use crate::vysis::Connectivity;
 use crate::vysyslib::Library;
@@ -20,7 +15,6 @@ use std::hash::Hasher;
 use std::hash::Hash;
 use std::collections::HashSet;
 use std::cmp::Ordering::*;
-use crate::utils::*;
 
 #[derive(Clone)]
 pub struct WireList {
@@ -306,144 +300,224 @@ pub fn generate_grouped_wirelist(library: &Library, connectivity: &Connectivity,
     Ok(wiregroups)
 }
 
-// columns(["WIRE_NAME",
-//                                        "WIRE_FROM_PINLIST", 
-//                                        "WIRE_FROM_CAVITY", 
-//                                        "WIRE_TERMINAL_STRIP_LEN1", 
-//                                        "WIRE_TO_PINLIST", 
-//                                        "WIRE_TO_CAVITY", 
-//                                        "WIRE_TERMINAL_STRIP_LEN2", 
-//                                        "MODIFIED_LENGTH",
-//                                        "PROCESSING"
+/// Convert grouped wire list to FlexibleTable
+pub fn wirelist_to_flexible_table(grouped_wirelist: Vec<Vec<WireEntry>>) -> FlexibleTable {
+    use crate::flexible_table::wire_list_columns;
 
-pub fn grouped_wirelist_to_data_frame(grouped_wirelist: Vec<Vec<WireEntry>>) -> DataFrame {
+    let columns = vec![
+        ColumnSpec { id: wire_list_columns::WIRE_NAME.to_string(), display: "Wire Item".to_string() },
+        ColumnSpec { id: wire_list_columns::SHORT_DESCRIPTION.to_string(), display: "Description".to_string() },
+        ColumnSpec { id: wire_list_columns::CUSTOMER_PART_NUMBER.to_string(), display: "Part No".to_string() },
+        ColumnSpec { id: wire_list_columns::MATERIAL.to_string(), display: "Material".to_string() },
+        ColumnSpec { id: wire_list_columns::SPEC.to_string(), display: "Spec".to_string() },
+        ColumnSpec { id: wire_list_columns::COLOR.to_string(), display: "Color".to_string() },
+        ColumnSpec { id: wire_list_columns::COLOR_DESCRIPTION.to_string(), display: "Color Desc".to_string() },
+        ColumnSpec { id: wire_list_columns::WIRE_FROM_PINLIST.to_string(), display: "From Device".to_string() },
+        ColumnSpec { id: wire_list_columns::WIRE_FROM_CAVITY.to_string(), display: "From Pin".to_string() },
+        ColumnSpec { id: wire_list_columns::WIRE_TERMINAL_STRIP_LEN1.to_string(), display: "From Strip".to_string() },
+        ColumnSpec { id: wire_list_columns::FROM_TERM_PARTNO.to_string(), display: "From Term".to_string() },
+        ColumnSpec { id: wire_list_columns::FROM_TERM_NAME.to_string(), display: "From Term Name".to_string() },
+        ColumnSpec { id: wire_list_columns::WIRE_TO_PINLIST.to_string(), display: "To Device".to_string() },
+        ColumnSpec { id: wire_list_columns::WIRE_TO_CAVITY.to_string(), display: "To Pin".to_string() },
+        ColumnSpec { id: wire_list_columns::WIRE_TERMINAL_STRIP_LEN2.to_string(), display: "To Strip".to_string() },
+        ColumnSpec { id: wire_list_columns::TO_TERM_PARTNO.to_string(), display: "To Term".to_string() },
+        ColumnSpec { id: wire_list_columns::TO_TERM_NAME.to_string(), display: "To Term Name".to_string() },
+        ColumnSpec { id: wire_list_columns::MODIFIED_LENGTH.to_string(), display: "Length".to_string() },
+        ColumnSpec { id: wire_list_columns::TWIST_WIDTH.to_string(), display: "Twist".to_string() },
+        ColumnSpec { id: wire_list_columns::PROCESSING.to_string(), display: "Processing".to_string() },
+        ColumnSpec { id: wire_list_columns::FROM_LABEL.to_string(), display: "From".to_string() },
+        ColumnSpec { id: wire_list_columns::TO_LABEL.to_string(), display: "To".to_string() },
+    ];
 
-    let column_names = [
-     "WIRE_NAME",
-     "SHORT_DESCRIPTION", // TODO: VERIFY THIS!
-     "CUSTOMER_PART_NUMBER", // TODO: VERIFY THIS!
-     "MATERIAL", // TODO: VERIFY THIS!
-     "SPEC", // TODO: VERIFY THIS!
-     "COLOR", //TODO: VERIFY THIS!
-     "COLOR_DESCRIPTION", // TODO: VERIFY THIS!
-     "WIRE_FROM_PINLIST", 
-     "WIRE_FROM_CAVITY", 
-     "WIRE_TERMINAL_STRIP_LEN1",
-     "WIRE_TO_PINLIST",
-     "WIRE_TO_CAVITY",
-     "WIRE_TERMINAL_STRIP_LEN2",
-     "MODIFIED_LENGTH",
-     "TWIST_WIDTH",
-     "PROCESSING"]; // CUSTOM FIELD
+    let mut table = FlexibleTable::new(columns);
 
-    let fields = column_names.map(|k| Field::new(k, DataType::String));
+    for mut group in grouped_wirelist {
+        sort_wirelist_by_left_device_pin(&mut group);
+        let last_in_group = group.len().saturating_sub(1);
+        for (i, wire) in group.into_iter().enumerate() {
+            let left = wire.left.clone().unwrap_or_default();
+            let right = wire.right.clone().unwrap_or_default();
+            let twisted = wire.twisted_with.as_ref().map(|x| format!(" (⤫ {})", x)).unwrap_or_default();
+            let wire_item = format!("{}{}", wire.name.as_ref(), twisted);
+            let from_label = format!("{}-{}", left.device.as_ref(), left.pin.as_ref());
+            let to_label = format!("{}-{}", right.device.as_ref(), right.pin.as_ref());
 
-    let sc: Schema = Schema::from_iter(fields);
-    let mut df = DataFrame::empty_with_schema(&sc);
-
-    for group in  grouped_wirelist.iter() {
-        for wire in group.iter() {
-            let wire = wire.clone();
-            let left_end = wire.left.unwrap_or_default();
-            let right_end = wire.right.unwrap_or_default();
-            let column_values = [
-                wire.name.as_ref(), 
-                wire.descr.as_ref(),
-                wire.partno.as_ref(),
-                wire.material.as_ref(),
-                wire.spec.as_ref(), 
-                wire.color_code.as_ref(), 
-                wire.color_description.as_ref(), 
-                left_end.device.as_ref(), 
-                left_end.pin.as_ref(), 
-                &left_end.strip.to_string(), 
-                right_end.device.as_ref(), 
-                right_end.pin.as_ref(), 
-                &right_end.strip.to_string(), 
-                &wire.length.to_string(),
-                &wire.twisted_with.unwrap_or_default(),
-                &wire.processing
+            let cells = vec![
+                wire_item,
+                wire.descr.to_string(),
+                wire.partno.to_string(),
+                wire.material.to_string(),
+                wire.spec.to_string(),
+                wire.color_code.to_string(),
+                wire.color_description.to_string(),
+                left.device.to_string(),
+                left.pin.to_string(),
+                left.strip.to_string(),
+                left.termination_partnumber.to_string(),
+                left.termination_name.to_string(),
+                right.device.to_string(),
+                right.pin.to_string(),
+                right.strip.to_string(),
+                right.termination_partnumber.to_string(),
+                right.termination_name.to_string(),
+                wire.length.to_string(),
+                wire.twisted_with.unwrap_or_default().to_string(),
+                wire.processing.to_string(),
+                from_label,
+                to_label,
             ];
-            println!("{:?}", column_values);
-            let series = column_names.iter().zip(column_values).map(|(name, value)| Series::new(name, &[value]) ).collect::<Vec<_>>();
-            //println!("{:?}", &(DataFrame::new(series.clone()).unwrap()));
-            let _ = df.vstack_mut(&(DataFrame::new(series).unwrap()));
+
+            let meta = RowMeta {
+                group_boundary_below: i == last_in_group,
+                color_code: if wire.color_code.is_empty() { None } else { Some(wire.color_code.to_string()) },
+            };
+
+            table.rows.push(FlexibleRow { cells, meta });
         }
-        // let series: Vec<_> = table_reader.column_map.keys().map(|k| Series::new(k, &[row.get_column(k).unwrap_or("N/A")])).collect();
     }
-    //println!("{:?}", df);
-    df
+
+    table
 }
 
-/// Build label dataframe from wirelist dataframe, this works for external harness dataframe too
-pub fn wirelist_dataframe_to_label_dataframe(wire_list: &DataFrame) -> DataFrame {
-    let mut wire_list = wire_list.clone();
-    // If you don't do this it will crash :( 
-    /*
-        thread 'main' panicked at C:\Users\vlad.shcherbakov\.cargo\registry\src\index.crates.io-6f17d22bba15001f\polars-core-0.42.0\src\series\iterator.rs:88:9:
-        assertion `left == right` failed: impl error
-        left: 137
-        right: 1
-    */
-    wire_list.as_single_chunk_par(); 
-
-    let mut iters = wire_list.columns(["WIRE_FROM_PINLIST", 
-                                       "WIRE_FROM_CAVITY", 
-                                       "WIRE_TO_PINLIST", 
-                                       "WIRE_TO_CAVITY"]).unwrap().iter().map(|s| s.iter()).collect::<Vec<_>>();
-    // New dataframe column names
-    let column_names = ["From", "To"];
-    // New datarfame string fields
-    let fields = column_names.map(|k| Field::new(k, DataType::String));
-    // New dataframe schema
-    let schema: Schema = Schema::from_iter(fields);
-    // New empty dataframe from schema
-    let mut df = DataFrame::empty_with_schema(&schema);
-
-    for row in 0..wire_list.height() {
-        let wire_from_pinlist = anyvalue_to_str(&iters[0].next().unwrap_or_default());
-        let wire_from_cavity = anyvalue_to_str(&iters[1].next().unwrap_or_default());
-        let wire_to_pinlist = anyvalue_to_str(&iters[2].next().unwrap_or_default());
-        let wire_to_cavity = anyvalue_to_str(&iters[3].next().unwrap_or_default());
-        let column_values = [
-            format!("{}-{}",wire_from_pinlist, wire_from_cavity),
-            format!("{}-{}",wire_to_pinlist, wire_to_cavity)];
-        let series = column_names.iter().zip(column_values).map(|(name, value)| Series::new(name, &[value]) ).collect::<Vec<_>>();
-        let _ = df.vstack_mut(&(DataFrame::new(series).unwrap()));
-
+fn format_connection(conn: &crate::vysis::Connection) -> String {
+    use crate::vysis::Connection;
+    match conn {
+        Connection::Device(d, p) => format!("{}-{}", d.get_name(), p.get_name()),
+        Connection::GroundDevice(d, p) => format!("{}-{}", d.get_name(), p.get_name()),
+        Connection::Connector(c, p) => format!("{}-{}", c.get_name(), p.get_name()),
+        Connection::Splice(s, p) => format!("{}-{}", s.get_name(), p.get_name()),
     }
-    df
 }
 
-/*
-pub struct WireEntry {
-    pub name: Box<str>,
-    pub descr: Box<str>,
-    pub partno: Box<str>,
-    pub material: Box<str>,
-    pub spec: Box<str>,
-    pub color_code: Box<str>,
-    pub color_description: Box<str>,
-    pub length: f32,
-    pub left: Option<WireEndEntry>,
-    pub right: Option<WireEndEntry>,
-    pub twisted_with: Option<Box<str>>
-}
+/// Build a table showing all pins of a connector and what wires are connected to each.
+/// Shows ALL pins from the connector (even empty ones) with wire name, description, and FROM-TO.
+pub fn connector_connections_to_flexible_table<'a>(
+    connectivity: &crate::vysis::Connectivity<'a>,
+    connector_dom: &crate::vysisxml::XmlConnector,
+) -> FlexibleTable {
+    use crate::flexible_table::{ColumnSpec, FlexibleRow, RowMeta};
+    use crate::vysis::Connection;
+    use std::collections::HashMap;
 
+    let connector_name = connector_dom.name.as_str();
+    let harness = connector_dom.harness.as_deref().unwrap_or("");
 
-impl From<VysysTableReader<'_>> for DataFrame {
-    fn from(table_reader: VysysTableReader<'_>) -> Self {
-        let fields = table_reader.column_map.keys().map(|k| Field::new(k, DataType::String));
+    #[derive(Clone)]
+    struct WireInfo {
+        name: String,
+        description: String,
+        from_label: String,
+        to_label: String,
+    }
 
-        let sc: Schema = Schema::from_iter(fields);
-        let mut df = DataFrame::empty_with_schema(&sc);
+    // Build map: pin_id -> Vec<WireInfo>
+    let mut pin_wires: HashMap<String, Vec<WireInfo>> = HashMap::new();
 
-        let row_iter = table_reader.get_row_iter();
-        for row in row_iter {
-            let series: Vec<_> = table_reader.column_map.keys().map(|k| Series::new(k, &[row.get_column(k).unwrap_or("N/A")])).collect();
-            df.vstack_mut(&(DataFrame::new(series).unwrap()));
+    // Initialize with all pins from connector (even empty)
+    for pin in &connector_dom.pin {
+        pin_wires.entry(pin.id.clone()).or_default();
+    }
+
+    // Scan wires for this harness and find connections to this connector
+    let wires = connectivity.get_wires(harness);
+    for wire in wires {
+        for conn_dom in &wire.dom.connection {
+            if let Some(connection) = connectivity.get_connection_by_pinref(conn_dom.pinref.as_ref()) {
+                if let Connection::Connector(conn, _pin) = connection {
+                    if conn.get_name() == connector_name {
+                        let connections = wire.get_connections();
+                        let from_label = connections
+                            .first()
+                            .map(|(c, _)| format_connection(c))
+                            .unwrap_or_default();
+                        let to_label = connections
+                            .get(1)
+                            .map(|(c, _)| format_connection(c))
+                            .unwrap_or_default();
+
+                        pin_wires
+                            .entry(conn_dom.pinref.clone())
+                            .or_default()
+                            .push(WireInfo {
+                                name: wire.get_name().to_string(),
+                                description: wire.get_short_descr().to_string(),
+                                from_label,
+                                to_label,
+                            });
+                    }
+                }
+            }
         }
-        df
     }
+
+    // Sort pins by name for consistent display
+    let mut pin_ids: Vec<_> = pin_wires.keys().cloned().collect();
+    pin_ids.sort_by(|a, b| {
+        let name_a = connector_dom.pin.iter().find(|p| &p.id == a).map(|p| &p.name).unwrap_or(a);
+        let name_b = connector_dom.pin.iter().find(|p| &p.id == b).map(|p| &p.name).unwrap_or(b);
+        name_a.cmp(name_b)
+    });
+
+    let columns = vec![
+        ColumnSpec {
+            id: "pin".to_string(),
+            display: "Pin".to_string(),
+        },
+        ColumnSpec {
+            id: "wire".to_string(),
+            display: "Wire".to_string(),
+        },
+        ColumnSpec {
+            id: "description".to_string(),
+            display: "Description".to_string(),
+        },
+        ColumnSpec {
+            id: "from".to_string(),
+            display: "From".to_string(),
+        },
+        ColumnSpec {
+            id: "to".to_string(),
+            display: "To".to_string(),
+        },
+    ];
+
+    let mut table = FlexibleTable::new(columns);
+
+    for pin_id in pin_ids {
+        let pin_name = connector_dom
+            .pin
+            .iter()
+            .find(|p| p.id == pin_id)
+            .map(|p| p.name.as_str())
+            .unwrap_or(pin_id.as_str());
+        let wire_infos = pin_wires.get(&pin_id).cloned().unwrap_or_default();
+
+        if wire_infos.is_empty() {
+            table.rows.push(FlexibleRow {
+                cells: vec![
+                    pin_name.to_string(),
+                    String::new(),
+                    String::new(),
+                    String::new(),
+                    String::new(),
+                ],
+                meta: RowMeta::default(),
+            });
+        } else {
+            for info in wire_infos {
+                table.rows.push(FlexibleRow {
+                    cells: vec![
+                        pin_name.to_string(),
+                        info.name,
+                        info.description,
+                        info.from_label,
+                        info.to_label,
+                    ],
+                    meta: RowMeta::default(),
+                });
+            }
+        }
+    }
+
+    table
 }
-*/
